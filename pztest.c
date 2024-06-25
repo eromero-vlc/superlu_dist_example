@@ -52,7 +52,7 @@ int comp_int_t(const void *a_ , const void*b_) {
 }
 
 int zcreate_matrix_qcd(SuperMatrix *A, int nrhs, doublecomplex **rhs,
-                   int *ldb, doublecomplex **x, int *ldx, Glu_freeable_t *Glu_freeable,
+                   int *ldb, doublecomplex **x, int *ldx,
                    int dim[4], int block_size, gridinfo_t *grid)
 {
     SuperMatrix GA;              /* global A */
@@ -88,17 +88,7 @@ int zcreate_matrix_qcd(SuperMatrix *A, int nrhs, doublecomplex **rhs,
     nnz = m * block_size * neighbors;
     zallocateA_dist(n, nnz, &nzval, &rowind, &colptr);
 
-    if (Glu_freeable) {
-        Glu_freeable->xusub = (int_t *) SUPERLU_MALLOC((m + 1) * sizeof(int_t));
-        Glu_freeable->usub = (int_t *) SUPERLU_MALLOC(nnz * sizeof(int_t));
-        Glu_freeable->xlsub = (int_t *) SUPERLU_MALLOC((n + 1) * sizeof(int_t));
-        Glu_freeable->lsub = (int_t *) SUPERLU_MALLOC(nnz * sizeof(int_t));
-    }
-
     colptr[0] = 0;
-    if (Glu_freeable) {
-        Glu_freeable->xusub[0] = Glu_freeable->xlsub[0 ] = 0;
-    }
     for (int lt=0, col=0, j=0, jL=0, jU=0; lt<dim[3]; ++lt) {
       for (int lz=0; lz<dim[2]; ++lz) {
         for (int ly=0; ly<dim[1]; ++ly) {
@@ -115,10 +105,6 @@ int zcreate_matrix_qcd(SuperMatrix *A, int nrhs, doublecomplex **rhs,
                 rowind[j] = row;
                 nzval[j] = (b == bj ? (doublecomplex){1.0,0.0} : (doublecomplex){1e-5,0.0});
                 j++;
-                if (Glu_freeable) {
-                    if (row >= col) Glu_freeable->lsub[jL++] = row;
-                    if (row <= col) Glu_freeable->usub[jU++] = row;
-                }
               }
               /* Add neighbors */
               for (int d=0; d<4; ++d) {
@@ -134,29 +120,14 @@ int zcreate_matrix_qcd(SuperMatrix *A, int nrhs, doublecomplex **rhs,
                     rowind[j] = row;
                     nzval[j] = (b == bj ? (doublecomplex){1e-5,0.0} : (doublecomplex){1e-10,0.0});
                     j++;
-                    if (Glu_freeable) {
-                        if (row >= col) Glu_freeable->lsub[jL++] = row;
-                        if (row <= col) Glu_freeable->usub[jU++] = row;
-                    }
                   }
                 }
               }
               colptr[col+1] = j;
-              //qsort(rowind + colptr[col], j - colptr[col], sizeof(int_t), comp_int_t);
-              if (Glu_freeable) {
-                Glu_freeable->xusub[col+1] = jU;
-                Glu_freeable->xlsub[col+1] = jL;
-                qsort(Glu_freeable->lsub + Glu_freeable->xlsub[col], jL - Glu_freeable->xlsub[col], sizeof(int_t), comp_int_t);
-                qsort(Glu_freeable->usub + Glu_freeable->xusub[col], jU - Glu_freeable->xusub[col], sizeof(int_t), comp_int_t);
-              }
             }
           }
         }
       }
-    }
-    if (Glu_freeable) {
-        Glu_freeable->nnzLU = Glu_freeable->xusub[m] + Glu_freeable->xlsub[m];
-        if (Glu_freeable->nnzLU != nnz + m) ABORT("wtf");
     }
 
     /* Compute the number of rows to be distributed to local process */
@@ -372,9 +343,8 @@ int main(int argc, char *argv[])
        ------------------------------------------------------------*/
     /* here, LU is ILU(0) */
     // Mimic symbolic factorization: set up Glu_freeable_t {} structure
-    Glu_freeable_t Glu_freeable;
-    zcreate_matrix_qcd(&LU, nrhs, &b, &ldb, &xtrue, &ldx, &Glu_freeable, dim, block_size, &grid);
-    zcreate_matrix_qcd(&A, 0, NULL, NULL, NULL, NULL, NULL, dim, block_size, &grid);
+    zcreate_matrix_qcd(&LU, nrhs, &b, &ldb, &xtrue, &ldx, dim, block_size, &grid);
+    zcreate_matrix_qcd(&A, 0, NULL, NULL, NULL, NULL, dim, block_size, &grid);
 
     if ( !(berr = doubleMalloc_dist(nrhs)) )
         ABORT("Malloc fails for berr[].");
@@ -401,7 +371,7 @@ int main(int argc, char *argv[])
     set_default_options_dist(&options);
     /* Turn off permutations */
     options.SolveOnly          = TRUE;
-    options.ILU_level          = -1;
+    options.ILU_level          = 0;
     //options.ColPerm           = NATURAL;
     //options.RowPerm           = NOROWPERM;
 
@@ -414,13 +384,16 @@ int main(int argc, char *argv[])
     for (i = 0; i < n; i++) LUstruct.etree[i] = i+1;
     
     /* Set up supernode partition */
-    LUstruct.Glu_persist->supno = (int_t *) SUPERLU_MALLOC(n * sizeof(int_t));
-    LUstruct.Glu_persist->xsup = (int_t *) SUPERLU_MALLOC((n+1) * sizeof(int_t));
-    for(i = 0; i < n; i++){
-        LUstruct.Glu_persist->supno[i] = i;
-        LUstruct.Glu_persist->xsup[i] = i;
-    }
-    LUstruct.Glu_persist->xsup[n] = n;
+    //LUstruct.Glu_persist->supno = (int_t *) SUPERLU_MALLOC(n * sizeof(int_t));
+    //LUstruct.Glu_persist->xsup = (int_t *) SUPERLU_MALLOC((n+1) * sizeof(int_t));
+    //for(i = 0; i < n; i++){
+    //    LUstruct.Glu_persist->supno[i] = i;
+    //    LUstruct.Glu_persist->xsup[i] = i;
+    //}
+    //LUstruct.Glu_persist->xsup[n] = n;
+
+    Glu_freeable_t Glu_freeable;
+    ilu_level_symbfact(&options, &LU, ScalePermstruct.perm_c, LUstruct.etree, LUstruct.Glu_persist, &Glu_freeable);
 
     /* 'fact' is set to be DOFACT to enable first-time distribution */
     options.Fact = DOFACT;
