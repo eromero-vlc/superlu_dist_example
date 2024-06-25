@@ -402,8 +402,8 @@ int main(int argc, char *argv[])
     superlu_dist_options_t options;
     set_default_options_dist(&options);
     /* Turn off permutations */
-    options.SolveOnly          = TRUE;
-    options.ILU_level          = -1;
+    options.SolveOnly          = YES;
+    options.ILU_level          = 0;
     //options.ColPerm           = NATURAL;
     //options.RowPerm           = NOROWPERM;
 
