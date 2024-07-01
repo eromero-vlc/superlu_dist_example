@@ -153,7 +153,12 @@ int zcreate_matrix_qcd(SuperMatrix *A, int nrhs, doublecomplex **rhs,
     if (nrhs > 0 && !(xtrue_global = doublecomplexMalloc_dist(n*nrhs)) )
         ABORT("Malloc fails for xtrue[]");
 
-    for (int_t i=0; i<m*nrhs; ++i) b_global[i] = xtrue_global[i] = (doublecomplex){1.0, 0.0};
+    for (int_t i=0; i<m*nrhs; ++i) xtrue_global[i] = (doublecomplex){1.0, 0.0};
+    double val = 1.0 /* block diag */ +
+                 1e-5 * (block_size - 1) /* out of block diag */ +
+                 neighbors * 1e-5 /* block diag */ +
+                 neighbors * (block_size - 1) * 1e-10 /* out of block diag */;
+    for (int_t i=0; i<m*nrhs; ++i) b_global[i] = (doublecomplex){val, 0.0};
 
     /*************************************************
      * Change GA to a local A with NR_loc format     *
@@ -250,7 +255,7 @@ int zcreate_matrix_qcd(SuperMatrix *A, int nrhs, doublecomplex **rhs,
 int main(int argc, char *argv[])
 {
     SuperLUStat_t stat;
-    SuperMatrix A, LU;
+    SuperMatrix A;
     zScalePermstruct_t ScalePermstruct;
     zLUstruct_t LUstruct;
     zSOLVEstruct_t SOLVEstruct;
@@ -315,6 +320,9 @@ int main(int argc, char *argv[])
         }
     }
 
+    int np=1;
+    MPI_Comm_size(MPI_COMM_WORLD, &np);
+    npdep = np;
        
     /* ------------------------------------------------------------
        INITIALIZE THE SUPERLU PROCESS GRID. 
@@ -345,8 +353,7 @@ int main(int argc, char *argv[])
        ------------------------------------------------------------*/
     /* here, LU is ILU(0) */
     // Mimic symbolic factorization: set up Glu_freeable_t {} structure
-    zcreate_matrix_qcd(&LU, nrhs, &b, &ldb, &xtrue, &ldx, dim, block_size, &grid);
-    zcreate_matrix_qcd(&A, 0, NULL, NULL, NULL, NULL, dim, block_size, &grid);
+    zcreate_matrix_qcd(&A, nrhs, &b, &ldb, &xtrue, &ldx, dim, block_size, &grid);
 
     if ( !(berr = doubleMalloc_dist(nrhs)) )
         ABORT("Malloc fails for berr[].");
@@ -374,6 +381,7 @@ int main(int argc, char *argv[])
     /* Turn off permutations */
     options.SolveOnly          = YES;
     options.ILU_level          = 0;
+    options.IterRefine        = NO;
 
     if (!iam) {
         print_sp_ienv_dist(&options);
@@ -381,14 +389,16 @@ int main(int argc, char *argv[])
         fflush(stdout);
     }
 
-    for (i = 0; i < n; i++) LUstruct.etree[i] = i+1;
-    
-
     ///* 'fact' is set to be DOFACT to enable first-time distribution */
     options.Fact = DOFACT;
 	
     /* Call the linear equation solver. */
     pzgssvx3d(&options, &A, &ScalePermstruct, b, ldb, nrhs, &grid, &LUstruct, &SOLVEstruct, berr, &stat, &info);
+
+    // Second call!!
+    for (int i = 0; i < 10; ++i)
+      pzgssvx3d(&options, &A, &ScalePermstruct, b, ldb, nrhs, &grid,
+                &LUstruct, &SOLVEstruct, berr, &stat, &info);
 
     if ( info ) {  /* Something is wrong */
         if ( iam==0 ) {
@@ -409,7 +419,6 @@ int main(int argc, char *argv[])
 
     PStatFree(&stat);
     Destroy_CompRowLoc_Matrix_dist(&A);
-    Destroy_CompRowLoc_Matrix_dist(&LU);
     zScalePermstructFree(&ScalePermstruct);
     zDestroy_LU(n, &grid.grid2d, &LUstruct);
     zLUstructFree(&LUstruct);
