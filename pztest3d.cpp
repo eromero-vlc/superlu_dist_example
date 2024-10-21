@@ -387,21 +387,24 @@ int main(int argc, char *argv[])
     for (i = 0; i < n; i++) LUstruct.etree[i] = i+1;
      
     ///* Allow to set up supernode partition */
-    options.UserDefineSupernode = NO;
+    options.UserDefineSupernode = YES;
 
     Glu_freeable_t Glu_freeable;
 
     /* Set up supernode partition */
+    //ilu_level_symbfact(&options, &A, ScalePermstruct.perm_c, LUstruct.etree, LUstruct.Glu_persist, &Glu_freeable);
     if (options.UserDefineSupernode == YES) {
         /* xsup/supno are already allocated in ilu_level_symfact(), now need to fill in the partition ... */
         for (i = 0; i < n; i++) LUstruct.Glu_persist->supno[i] = i/block_size;
-        for (i = 0; i < n/block_size; i++) LUstruct.Glu_persist->supno[i] = i*block_size;
+        for (i = 0; i < n/block_size; i++) LUstruct.Glu_persist->xsup[i] = i*block_size;
         LUstruct.Glu_persist->xsup[n/block_size] = n;
     }
-    ilu_level_symbfact(&options, &A, ScalePermstruct.perm_c, LUstruct.etree, LUstruct.Glu_persist, &Glu_freeable);
 
     ///* 'fact' is set to be DOFACT to enable first-time distribution */
-    options.Fact = DOFACT;
+    //options.Fact = DOFACT;
+    //output = pzdistribute3d(&options, n, &LU, &ScalePermstruct, &Glu_freeable, &LUstruct, &grid);
+
+    //options.Fact = FACTORED;
 	
     /* Call the linear equation solver. */
     pzgssvx3d(&options, &A, &ScalePermstruct, b, ldb, nrhs, &grid, &LUstruct, &SOLVEstruct, berr, &stat, &info);
