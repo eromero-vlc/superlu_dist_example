@@ -389,15 +389,21 @@ int main(int argc, char *argv[])
     ///* Allow to set up supernode partition */
     options.UserDefineSupernode = YES;
 
-    Glu_freeable_t Glu_freeable;
-
     /* Set up supernode partition */
     //ilu_level_symbfact(&options, &A, ScalePermstruct.perm_c, LUstruct.etree, LUstruct.Glu_persist, &Glu_freeable);
+    
     if (options.UserDefineSupernode == YES) {
-        /* xsup/supno are already allocated in ilu_level_symfact(), now need to fill in the partition ... */
-        for (i = 0; i < n; i++) LUstruct.Glu_persist->supno[i] = i/block_size;
-        for (i = 0; i < n/block_size; i++) LUstruct.Glu_persist->xsup[i] = i*block_size;
-        LUstruct.Glu_persist->xsup[n/block_size] = n;
+        /* User needs to allocate supno[]/xsup, and fill in the supernode partition
+	   User does not need to free them; they are free'd by zDestroy_LU() */
+	int_t *supno = intMalloc_dist(n);
+	int_t *xsup = intMalloc_dist(n+1);
+        for (i = 0; i < n; i++) supno[i] = i/block_size;
+        for (i = 0; i < n/block_size; i++) xsup[i] = i*block_size;
+        xsup[n/block_size] = n;
+	
+	/* aliases for superlu internal access */
+        LUstruct.Glu_persist->supno = supno; 
+	LUstruct.Glu_persist->xsup = xsup;
     }
 
     ///* 'fact' is set to be DOFACT to enable first-time distribution */
