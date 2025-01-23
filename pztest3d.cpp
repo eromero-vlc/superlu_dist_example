@@ -22,7 +22,16 @@ at the top-level directory.
 
 #include <math.h>
 #include <stdlib.h>
+#include <chrono>
+#include <iostream>
 #include "superlu_zdefs.h"
+
+/// Return the number of seconds from some start
+inline double w_time() {
+    return std::chrono::duration<double>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
 
 /*! \brief
  *
@@ -267,6 +276,7 @@ int main(int argc, char *argv[])
     npcol = 1;  /* Default process columns.   */
     npdep = 1;  /* Default process columns.   */
     nrhs = 1;   /* Number of right-hand side. */
+    double t0=0;
 
     /* ------------------------------------------------------------
        INITIALIZE MPI ENVIRONMENT. 
@@ -310,14 +320,25 @@ int main(int argc, char *argv[])
             if (block_size < 1) {
                 ABORT("The rep should be greater than zero");
             }
+        } else if (strncmp("-grid=", argv[i], 6) == 0) {
+            if (sscanf(argv[i] + 6, "%d %d %d", &nprow, &npcol, &npdep) != 3) {
+                ABORT("-grid= should follow 3 numbers, for instance -grid='2 2 2'");
+            }
+            if (nprow < 1 || npcol < 1 || npdep < 1) {
+                ABORT("One of the grid dimensions is smaller than one");
+            }
         } else {
             ABORT("Unknown commandline option");
         }
     }
 
-    int np=1;
+    int np=1, rank=0;
     MPI_Comm_size(MPI_COMM_WORLD, &np);
-    npdep = np;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    int devs;
+    gpuGetDeviceCount(&devs);  // Returns the number of compute-capable devices
+    gpuSetDevice(rank % devs); // Set device to be used for GPU executions
        
     /* ------------------------------------------------------------
        INITIALIZE THE SUPERLU PROCESS GRID. 
@@ -416,9 +437,11 @@ int main(int argc, char *argv[])
     pzgssvx3d(&options, &A, &ScalePermstruct, b, ldb, nrhs, &grid, &LUstruct, &SOLVEstruct, berr, &stat, &info);
 
     // Second call!!
+    t0 = w_time();
     for (int i = 0; i < 10; ++i)
       pzgssvx3d(&options, &A, &ScalePermstruct, b, ldb, nrhs, &grid,
                 &LUstruct, &SOLVEstruct, berr, &stat, &info);
+    if (rank == 0) std::cout << "Time to apply ILU(0): " << (w_time() - t0)/10 << std::endl;
 
     if ( info ) {  /* Something is wrong */
         if ( iam==0 ) {
