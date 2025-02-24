@@ -336,14 +336,40 @@ int main(int argc, char *argv[])
     MPI_Comm_size(MPI_COMM_WORLD, &np);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    int devs;
-    gpuGetDeviceCount(&devs);  // Returns the number of compute-capable devices
-    gpuSetDevice(rank % devs); // Set device to be used for GPU executions
-       
     /* ------------------------------------------------------------
        INITIALIZE THE SUPERLU PROCESS GRID. 
        ------------------------------------------------------------*/
     superlu_gridinit3d(MPI_COMM_WORLD, nprow, npcol, npdep, &grid);
+
+
+    /* Set the default input options: */
+    superlu_dist_options_t options;
+    set_default_options_dist(&options);
+    /* Turn off permutations */
+    options.SolveOnly          = YES;
+    options.ILU_level          = 0;
+    options.IterRefine        = NOREFINE;
+
+
+#ifdef GPU_ACC
+    /* ------------------------------------------------------------
+       INITIALIZE GPU ENVIRONMENT
+       ------------------------------------------------------------ */
+    int superlu_acc_offload = sp_ienv_dist(10, &options); //get_acc_offload();
+    if (superlu_acc_offload) {
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        double t1 = SuperLU_timer_();
+        gpuFree(0);
+        double t2 = SuperLU_timer_();
+        if(!rank)printf("first gpufree time: %7.4f\n",t2-t1);
+        gpublasHandle_t hb;
+        gpublasCreate(&hb);
+        if(!rank)printf("first blas create time: %7.4f\n",SuperLU_timer_()-t2);
+        gpublasDestroy(hb);
+	}
+#endif
+
+
 
     /* Bail out if I do not belong in the grid. */
     iam = grid.iam;
@@ -391,13 +417,7 @@ int main(int argc, char *argv[])
     for(i = 0; i < m; i++) ScalePermstruct.perm_r[i] = i;
     for(i = 0; i < n; i++)ScalePermstruct.perm_c[i] = i;
 
-    /* Set the default input options: */
-    superlu_dist_options_t options;
-    set_default_options_dist(&options);
-    /* Turn off permutations */
-    options.SolveOnly          = YES;
-    options.ILU_level          = 0;
-    options.IterRefine        = NOREFINE;
+
 
     if (!iam) {
         print_sp_ienv_dist(&options);
@@ -437,6 +457,9 @@ int main(int argc, char *argv[])
     pzgssvx3d(&options, &A, &ScalePermstruct, b, ldb, nrhs, &grid, &LUstruct, &SOLVEstruct, berr, &stat, &info);
 
     // Second call!!
+    options.SolveOnly= NO; // YL: options->SolveOnly will set Fact to DOFACT for distribution 
+    options.Fact = FACTORED;
+
     t0 = w_time();
     for (int i = 0; i < 10; ++i)
       pzgssvx3d(&options, &A, &ScalePermstruct, b, ldb, nrhs, &grid,
