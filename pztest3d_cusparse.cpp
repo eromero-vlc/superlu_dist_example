@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <complex>
 #include <cuda_runtime.h>
 #include <cusparse.h>
 #include <iostream>
@@ -43,15 +44,15 @@ inline void check(cusparseStatus_t status) {
   }
 }
 
-// using Z_t = std::complex<double>;
-using Z_t = double;
+using Z_t = std::complex<double>;
+using cuZ_t = cuDoubleComplex;
 using int_t = int;
 
 struct BSR_Mat_z {
   int_t row_blocks; // number of row blocks
   int_t num_blocks; // total number of nonzero blocks
   int_t block_size; // size of the block
-  Z_t *vals;
+  cuZ_t *vals;
   int_t *ii;
   int_t *jj;
 };
@@ -138,7 +139,7 @@ BSR_Mat_z zcreate_matrix_qcd(int dim[4], int block_size) {
                    sizeof(int_t) * ii.size(), cudaMemcpyHostToDevice));
   check(cudaMemcpy((void *)jj_d, (const void *)jj.data(),
                    sizeof(int_t) * jj.size(), cudaMemcpyHostToDevice));
-  return {m_blocks, (int_t)jj.size(), block_size, vals_d, ii_d, jj_d};
+  return {m_blocks, (int_t)jj.size(), block_size, (cuZ_t *)vals_d, ii_d, jj_d};
 }
 
 void test(cusparseHandle_t handle, const BSR_Mat_z &A, int nrhs, int reps) {
@@ -157,7 +158,7 @@ void test(cusparseHandle_t handle, const BSR_Mat_z &A, int nrhs, int reps) {
   void *pBuffer = 0;
   int structural_zero;
   int numerical_zero;
-  const double alpha = 1.;
+  const Z_t alpha = 1.;
   const cusparseSolvePolicy_t policy_M = CUSPARSE_SOLVE_POLICY_NO_LEVEL;
   const cusparseSolvePolicy_t policy_L = CUSPARSE_SOLVE_POLICY_NO_LEVEL;
   const cusparseSolvePolicy_t policy_U = CUSPARSE_SOLVE_POLICY_USE_LEVEL;
@@ -192,13 +193,13 @@ void test(cusparseHandle_t handle, const BSR_Mat_z &A, int nrhs, int reps) {
 
   // step 3: query how much memory used in bsrilu02 and bsrsv2, and allocate the
   // buffer
-  check(cusparseDbsrilu02_bufferSize(handle, dir, mb, nnzb, descr_M, A.vals,
+  check(cusparseZbsrilu02_bufferSize(handle, dir, mb, nnzb, descr_M, A.vals,
                                      A.ii, A.jj, A.block_size, info_M,
                                      &pBufferSize_M));
-  check(cusparseDbsrsm2_bufferSize(handle, dir, trans_L, trans_X, mb, nrhs,
+  check(cusparseZbsrsm2_bufferSize(handle, dir, trans_L, trans_X, mb, nrhs,
                                    nnzb, descr_L, A.vals, A.ii, A.jj,
                                    A.block_size, info_L, &pBufferSize_L));
-  check(cusparseDbsrsm2_bufferSize(handle, dir, trans_U, trans_X, mb, nrhs,
+  check(cusparseZbsrsm2_bufferSize(handle, dir, trans_U, trans_X, mb, nrhs,
                                    nnzb, descr_U, A.vals, A.ii, A.jj,
                                    A.block_size, info_U, &pBufferSize_U));
 
@@ -213,7 +214,7 @@ void test(cusparseHandle_t handle, const BSR_Mat_z &A, int nrhs, int reps) {
   // The lower(upper) triangular part of M has the same sparsity pattern as
   // L(U), we can do analysis of bsrilu0 and bsrsv2 simultaneously.
 
-  check(cusparseDbsrilu02_analysis(handle, dir, mb, nnzb, descr_M, A.vals, A.ii,
+  check(cusparseZbsrilu02_analysis(handle, dir, mb, nnzb, descr_M, A.vals, A.ii,
                                    A.jj, A.block_size, info_M, policy_M,
                                    pBuffer));
   auto status = cusparseXbsrilu02_zeroPivot(handle, info_M, &structural_zero);
@@ -221,15 +222,15 @@ void test(cusparseHandle_t handle, const BSR_Mat_z &A, int nrhs, int reps) {
     printf("A(%d,%d) is missing\n", structural_zero, structural_zero);
   }
 
-  check(cusparseDbsrsm2_analysis(handle, dir, trans_L, trans_X, mb, nrhs, nnzb,
+  check(cusparseZbsrsm2_analysis(handle, dir, trans_L, trans_X, mb, nrhs, nnzb,
                                  descr_L, A.vals, A.ii, A.jj, A.block_size,
                                  info_L, policy_L, pBuffer));
-  check(cusparseDbsrsm2_analysis(handle, dir, trans_U, trans_X, mb, nrhs, nnzb,
+  check(cusparseZbsrsm2_analysis(handle, dir, trans_U, trans_X, mb, nrhs, nnzb,
                                  descr_U, A.vals, A.ii, A.jj, A.block_size,
                                  info_U, policy_U, pBuffer));
 
   // step 5: M = L * U
-  check(cusparseDbsrilu02(handle, dir, mb, nnzb, descr_M, A.vals, A.ii, A.jj,
+  check(cusparseZbsrilu02(handle, dir, mb, nnzb, descr_M, A.vals, A.ii, A.jj,
                           A.block_size, info_M, policy_M, pBuffer));
   status = cusparseXbsrilu02_zeroPivot(handle, info_M, &numerical_zero);
   if (CUSPARSE_STATUS_ZERO_PIVOT == status) {
@@ -239,9 +240,9 @@ void test(cusparseHandle_t handle, const BSR_Mat_z &A, int nrhs, int reps) {
 
   auto m = mb * A.block_size;
   std::vector<Z_t> x(m * nrhs, (Z_t)1);
-  Z_t *x_d = nullptr;
-  Z_t *y_d = nullptr;
-  Z_t *z_d = nullptr;
+  cuZ_t *x_d = nullptr;
+  cuZ_t *y_d = nullptr;
+  cuZ_t *z_d = nullptr;
   check(cudaMalloc((void **)&x_d, sizeof(Z_t) * x.size()));
   check(cudaMalloc((void **)&y_d, sizeof(Z_t) * x.size()));
   check(cudaMalloc((void **)&z_d, sizeof(Z_t) * x.size()));
@@ -252,14 +253,14 @@ void test(cusparseHandle_t handle, const BSR_Mat_z &A, int nrhs, int reps) {
   auto t0 = w_time();
   for (int i = 0; i < reps; ++i) {
     // step 6: solve L*z = x
-    check(cusparseDbsrsm2_solve(handle, dir, trans_L, trans_X, mb, nrhs, nnzb,
-                                &alpha, descr_L, A.vals, A.ii, A.jj,
+    check(cusparseZbsrsm2_solve(handle, dir, trans_L, trans_X, mb, nrhs, nnzb,
+                                (cuZ_t *)&alpha, descr_L, A.vals, A.ii, A.jj,
                                 A.block_size, info_L, x_d, ldX, z_d, ldX,
                                 policy_L, pBuffer));
 
     // step 7: solve U*y = z
-    check(cusparseDbsrsm2_solve(handle, dir, trans_U, trans_X, mb, nrhs, nnzb,
-                                &alpha, descr_U, A.vals, A.ii, A.jj,
+    check(cusparseZbsrsm2_solve(handle, dir, trans_U, trans_X, mb, nrhs, nnzb,
+                                (cuZ_t *)&alpha, descr_U, A.vals, A.ii, A.jj,
                                 A.block_size, info_U, z_d, ldX, y_d, ldX,
                                 policy_U, pBuffer));
   }
